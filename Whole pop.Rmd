@@ -1,0 +1,392 @@
+---
+title: '2.6'
+author: "Yining He"
+date: "2025-02-06"
+output: html_document
+---
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(readxl)
+```
+
+# Table 1 for whole population gender
+```{r}
+# Load the data from the Excel file (Sheet: Gender)
+file_path <- "Whole population.xlsx"
+data <- read_excel(file_path, sheet = "Gender")
+
+# 确保 Age Adjusted Rate 和 Year 是数值型
+data <- data %>%
+  mutate(
+    `Age Adjusted Rate` = as.numeric(`Age Adjusted Rate`),
+    Year = as.numeric(Year)
+  )
+
+# 筛选 2018-2023 年 & 只保留 Substance 为 Alcohol, Stimulant, Opioid
+data_filtered <- data %>%
+  filter(
+    Year >= 2018 & Year <= 2023,
+    Substance %in% c("Alcohol", "Stimulant", "Opioid")
+  ) %>%
+  mutate(
+    Gender = as.factor(Sex),
+    Substance = as.factor(Substance),
+    Age_Adjusted_Rate_Label = ifelse(!is.na(`Age Adjusted Rate`), 
+                                     round(`Age Adjusted Rate`, 2), 
+                                     NA)
+  )
+
+# 这里设置 Substance 的因子水平顺序，使分面顺序为 Opioid -> Stimulant -> Alcohol
+data_filtered$Substance <- factor(data_filtered$Substance, 
+                                  levels = c("Opioid", "Stimulant", "Alcohol"))
+
+# 定义性别颜色
+gender_colors <- c("Male" = "#1B9E77", "Female" = "#D95F02")
+
+# 创建折线图：展示2018-2023年间的 Age Adjusted Rate 趋势，分面按 Substance
+trend_plot <- ggplot(data_filtered, 
+                     aes(x = Year, 
+                         y = `Age Adjusted Rate`, 
+                         color = Gender, 
+                         group = Gender)) +
+  geom_line(size = 1.5) +                      
+  geom_point(size = 3) +                       
+  geom_text(aes(label = Age_Adjusted_Rate_Label),
+            vjust = -0.8, size = 3.5, color = "black", na.rm = TRUE) +  
+  facet_wrap(~Substance, scales = "fixed", ncol = 3) +        # 使用固定y轴并一行3列
+  scale_x_continuous(breaks = seq(2018, 2023, by = 1)) +                
+  scale_color_manual(values = gender_colors) +                          
+  labs(
+    title = "Age Adjusted Mortality Rate Trends by Gender and Substance (2018-2023)",
+    x = "Year",
+    y = "Age Adjusted Rate (per 100,000)",
+    color = "Gender"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 18, face = "bold"),
+    strip.text = element_text(size = 12, face = "bold"),
+    axis.text.x = element_text(size = 12, angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 12),
+    axis.title.y = element_text(size = 14),
+    axis.title.x = element_text(size = 14),
+    legend.position = "bottom",
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 12),
+    panel.grid.major = element_line(size = 0.5, color = "gray80"),
+    panel.grid.minor = element_blank()
+  )
+
+# 打印折线图
+print(trend_plot)
+
+ggsave("Age_Adjusted_Rate_Trends_Gender_Substance.pdf", 
+       plot = trend_plot, width = 12, height = 10, dpi = 600)
+
+```
+
+# Table2 for whole population gap
+```{r}
+library(readxl)   # 用于读取 Excel 文件
+library(dplyr)    # 常用数据清洗与转换
+library(tidyr)    # pivot_wider/pivot_longer 等表格变换函数
+library(ggplot2)  # 绘图
+library(gridExtra) # 将多个 ggplot 合并为一个图
+file_path <- "Whole population.xlsx"
+data <- read_excel(file_path, sheet = "Gender")
+
+# 将 Age Adjusted Rate 和 Year 转为数值型，以免后续处理报错
+data <- data %>%
+  mutate(
+    `Age Adjusted Rate` = as.numeric(`Age Adjusted Rate`),
+    Year = as.numeric(Year)
+  )
+
+
+data_filtered <- data %>%
+  filter(Year >= 2018 & Year <= 2023)
+
+
+sex_gap_data <- data_filtered %>%
+  select(Year, Substance, Sex, `Age Adjusted Rate`) %>%
+  pivot_wider(
+    names_from  = Sex, 
+    values_from = `Age Adjusted Rate`
+  ) %>%
+  mutate(
+    Gender_Gap = Male - Female    # 计算 Gender Gap
+  ) %>%
+  filter(!is.na(Gender_Gap))      # 移除有缺失值的行
+
+# ------------------------------------------------------------------------------
+# 四、只保留 Alcohol、Stimulant、Opioid 三种物质，并设定顺序
+# ------------------------------------------------------------------------------
+sex_gap_data_filtered <- sex_gap_data %>%
+  filter(Substance %in% c("Opioid", "Stimulant", "Alcohol")) %>%
+  mutate(
+    # 通过因子水平来控制显示顺序：从左到右依次为 Opioid、Stimulant、Alcohol
+    Substance = factor(Substance, levels = c("Opioid", "Stimulant", "Alcohol"))
+  )
+
+gap_range <- range(sex_gap_data_filtered$Gender_Gap, na.rm = TRUE)
+
+gap_color <- "#E7298A"
+
+# 2. 获取物质列表（按照因子水平顺序）
+substance_list <- levels(sex_gap_data_filtered$Substance)
+plot_list <- list()
+
+# 3. 循环生成每个物质的图形
+for (sub in substance_list) {
+  
+  # 针对当前物质筛选数据
+  sub_data <- sex_gap_data_filtered %>% 
+    filter(Substance == sub)
+  
+  # 绘制折线图
+  p <- ggplot(sub_data, aes(x = Year, y = Gender_Gap)) +
+    geom_line(color = gap_color, size = 1.5) +
+    geom_point(size = 3) +
+    # 在点上方添加标签，保留 2 位小数
+    geom_text(aes(label = round(Gender_Gap, 2)), 
+              vjust = -0.8, size = 4, color = "black") +
+    # X 轴显示 2018-2023
+    scale_x_continuous(breaks = seq(2018, 2023, by = 1)) +
+    # 所有图使用相同的 Y 轴范围
+    scale_y_continuous(limits = gap_range) +
+    labs(
+      title = sub, 
+      x = "Year", 
+      y = "Gender Gap (Male - Female)"
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+      axis.text.x = element_text(size = 12, angle = 45, hjust = 1),
+      axis.text.y = element_text(size = 12),
+      axis.title.y = element_text(size = 14),
+      axis.title.x = element_text(size = 14),
+      panel.grid.major = element_line(size = 0.5, color = "gray80"),
+      panel.grid.minor = element_blank()
+    )
+  
+  # 将当前图存入列表
+  plot_list[[sub]] <- p
+}
+
+# 4. 使用 grid.arrange 将图表排成 1 行 x 3 列
+final_plot <- grid.arrange(
+  grobs = plot_list, 
+  ncol = 3, 
+  nrow = 1,
+  top = "Gender Gap (Male - Female) in Age Adjusted Rate (2018-2023)"
+)
+
+ggsave(
+  filename = "Gender_Gap_in_Age_Adjusted_Rate_Opioid_Stimulant_Alcohol.pdf",
+  plot = final_plot,
+  width = 14, 
+  height = 10, 
+  dpi = 600
+)
+
+```
+
+#Combie table1 and Table2
+```{r}
+
+library(ggplot2)
+library(dplyr)
+library(readxl)
+library(tidyr)    # 用于数据转换
+
+
+file_path <- "Whole population.xlsx"
+data <- read_excel(file_path, sheet = "Gender")
+
+# 确保 Age Adjusted Rate 和 Year 为数值型
+data <- data %>%
+  mutate(
+    `Age Adjusted Rate` = as.numeric(`Age Adjusted Rate`),
+    Year = as.numeric(Year)
+  )
+
+# 筛选 2018-2023 年 & 只保留 Alcohol, Stimulant, Opioid
+data_filtered <- data %>%
+  filter(
+    Year >= 2018 & Year <= 2023,
+    Substance %in% c("Alcohol", "Stimulant", "Opioid")
+  ) %>%
+  mutate(
+    Sex = as.factor(Sex),
+    Substance = factor(Substance, levels = c("Opioid", "Stimulant", "Alcohol"))
+  )
+
+# ------------------------------------------------------------------------------
+# 计算 Gender Gap (Male - Female) 并合并回 data_filtered
+# ------------------------------------------------------------------------------
+gap_data <- data_filtered %>%
+  select(Year, Substance, Sex, `Age Adjusted Rate`) %>%
+  pivot_wider(names_from = Sex, values_from = `Age Adjusted Rate`) %>%
+  mutate(Gender_Gap = Male - Female) %>%
+  pivot_longer(cols = c("Male", "Female", "Gender_Gap"), 
+               names_to = "Type", values_to = "Rate")
+
+# 颜色定义：Male (绿色), Female (橙色), Gender Gap (深红色)
+color_palette <- c("Male" = "#1B9E77", "Female" = "#D95F02", "Gender_Gap" = "#E7298A")
+
+
+trend_plot <- ggplot(gap_data, 
+                     aes(x = Year, y = Rate, color = Type, group = Type)) +
+  geom_line(aes(linetype = Type), size = 1.5) +    # Gender Gap 用虚线
+  geom_point(size = 3) +  
+  geom_text(aes(label = round(Rate, 2)), 
+            vjust = -0.8, size = 3.5, color = "black", na.rm = TRUE) +
+  facet_wrap(~Substance, scales = "fixed", ncol = 3) +  # 3 列，固定 Y 轴
+  scale_x_continuous(breaks = seq(2018, 2023, by = 1)) +
+  scale_color_manual(values = color_palette) +  
+  scale_linetype_manual(values = c("Male" = "solid", "Female" = "solid", "Gender_Gap" = "dashed")) +  
+  labs(
+    title = "Age Adjusted Mortality Rate & Gender Gap Trends (2018-2023)",
+    x = "Year",
+    y = "Rate (per 100,000)",
+    color = "Legend"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 18, face = "bold"),
+    strip.text = element_text(size = 12, face = "bold"),
+    axis.text.x = element_text(size = 12, angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 12),
+    axis.title.y = element_text(size = 14),
+    axis.title.x = element_text(size = 14),
+    legend.position = "bottom",
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 12),
+    panel.grid.major = element_line(size = 0.5, color = "gray80"),
+    panel.grid.minor = element_blank()
+  )
+
+# 显示图表
+print(trend_plot)
+
+
+ggsave("Age_Adjusted_Rate_with_Gender_Gap.pdf", 
+       plot = trend_plot, width = 14, height = 10, dpi = 600)
+
+```
+
+
+#Table4 Rate Ratio
+```{r}
+
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# ------------------------------------------------------------------------------
+# 二、读取并初步处理数据
+# ------------------------------------------------------------------------------
+file_path <- "Whole population.xlsx"   # 请根据实际路径修改
+data <- read_excel(file_path, sheet = "Gender")
+
+data <- data %>%
+  mutate(
+    `Age Adjusted Rate` = as.numeric(`Age Adjusted Rate`),
+    Year = as.numeric(Year)
+  )
+
+# ------------------------------------------------------------------------------
+# 三、只筛选 2018-2023 年，且只保留三种物质 (Opioid, Stimulant, Alcohol)
+# ------------------------------------------------------------------------------
+data_filtered <- data %>%
+  filter(
+    Year >= 2018 & Year <= 2023,
+    Substance %in% c("Opioid", "Stimulant", "Alcohol")
+  )
+
+# ------------------------------------------------------------------------------
+# 四、将 Male/Female 转宽表，计算比值 = Male / Female
+# ------------------------------------------------------------------------------
+ratio_data <- data_filtered %>%
+  select(Year, Substance, Sex, `Age Adjusted Rate`) %>%
+  pivot_wider(
+    names_from  = Sex, 
+    values_from = `Age Adjusted Rate`
+  ) %>%
+  mutate(
+    MF_Ratio = Male / Female    # 计算 "Male-to-Female Rate Ratio"
+  ) %>%
+  filter(!is.na(MF_Ratio))      # 移除比值为 NA 的行
+
+# ------------------------------------------------------------------------------
+# 五、只保留 Opioid、Stimulant、Alcohol，并设定分面顺序
+# ------------------------------------------------------------------------------
+ratio_data <- ratio_data %>%
+  filter(Substance %in% c("Opioid", "Stimulant", "Alcohol")) %>%
+  mutate(
+    # 按指定顺序显示 Opioid -> Stimulant -> Alcohol
+    Substance = factor(Substance, levels = c("Opioid", "Stimulant", "Alcohol"))
+  )
+
+# ------------------------------------------------------------------------------
+# 六、绘图：在同一个面板显示 Male-to-Female Rate Ratio 的趋势
+# ------------------------------------------------------------------------------
+# 如果只想单独显示这条比值线，可在分面内只绘制一条线。
+# 下面示例将为每种 Substance 分面，Y 轴为 MF_Ratio
+
+# 1. 先创建一个标签列
+ratio_data <- ratio_data %>%
+  mutate(
+    MF_Ratio_Label = round(MF_Ratio, 2)  # 保留2位小数
+  )
+
+# 2. 绘制
+ratio_color <- "#4682B4"  # 你可以根据需要自行选择颜色
+
+ratio_plot <- ggplot(ratio_data, aes(x = Year, y = MF_Ratio, group = 1)) +
+  geom_line(color = ratio_color, size = 1.5) +
+  geom_point(color = ratio_color, size = 3) +
+  geom_text(aes(label = MF_Ratio_Label),
+            vjust = -0.8, size = 3.5, color = "black", na.rm = TRUE) +
+  facet_wrap(~Substance, scales = "fixed", ncol = 3) +
+  scale_x_continuous(breaks = seq(2018, 2023, by = 1)) +
+  labs(
+    title = "Male-to-Female Rate Ratio (Age Adjusted) by Substance (2018-2023)",
+    x = "Year",
+    y = "Rate Ratio (Male / Female)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title    = element_text(hjust = 0.5, size = 18, face = "bold"),
+    strip.text    = element_text(size = 12, face = "bold"),
+    axis.text.x   = element_text(size = 12, angle = 45, hjust = 1),
+    axis.text.y   = element_text(size = 12),
+    axis.title.y  = element_text(size = 14),
+    axis.title.x  = element_text(size = 14),
+    legend.position = "none",  # 因为只有一条线，隐藏图例
+    panel.grid.major = element_line(size = 0.5, color = "gray80"),
+    panel.grid.minor = element_blank()
+  )
+
+# ------------------------------------------------------------------------------
+# 七、查看并保存结果
+# ------------------------------------------------------------------------------
+print(ratio_plot)
+
+ggsave(
+  filename = "Male_Female_Rate_Ratio_Trends.pdf",
+  plot = ratio_plot,
+  width = 12, 
+  height = 6, 
+  dpi = 600
+)
+
+```
+
+
+
+
